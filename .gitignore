@@ -1,0 +1,16 @@
+# virtual envs
+venv/
+env/
+.venv/
+.env
+.env
+.env
+
+# IDE
+.vscode/
+
+node_modules/
+dist/
+coverage/
+
+test.db
