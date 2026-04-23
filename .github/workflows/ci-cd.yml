@@ -84,7 +84,7 @@ jobs:
             -c "SELECT extname FROM pg_extension WHERE extname = 'uuid-ossp';"
 
       - name: Security scan (Trivy, informational)
-        uses: aquasecurity/trivy-action@0.24.0
+        uses: aquasecurity/trivy-action@v0.36.0
         continue-on-error: true
         with:
           image-ref: db-init:test
