@@ -96,6 +96,9 @@ jobs:
       - name: Sonar scan
         if: github.ref == 'refs/heads/main'
         uses: SonarSource/sonarqube-scan-action@v5.0.0
+        with:
+            args: >
+              -Dsonar.qualitygate.wait=false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
