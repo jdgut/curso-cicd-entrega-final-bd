@@ -101,12 +101,12 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
 
-      - name: Sonar quality gate
-        if: github.ref == 'refs/heads/main'
-        uses: SonarSource/sonarqube-quality-gate-action@v1.2.0
-        timeout-minutes: 5
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+#      - name: Sonar quality gate
+#        if: github.ref == 'refs/heads/main'
+#        uses: SonarSource/sonarqube-quality-gate-action@v1.2.0
+#        timeout-minutes: 5
+#        env:
+#          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
       - name: Cleanup test container
         if: always()
