@@ -14,3 +14,10 @@ dist/
 coverage/
 
 test.db
+
+# Terraform
+infra/.terraform/
+#infra/.terraform.lock.hcl
+infra/terraform.tfstate*
+infra/terraform.tfstate.d/
+infra/*.tfvars

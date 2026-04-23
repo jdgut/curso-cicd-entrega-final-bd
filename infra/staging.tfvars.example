@@ -1,0 +1,15 @@
+environment_name = "staging"
+aws_region       = "us-east-1"
+
+docker_image_uri = "dockerhub-user/db-image:dev"
+lab_role_arn     = "arn:aws:iam::123456789012:role/LabRole"
+vpc_id           = "vpc-xxxxxxxx"
+subnet_ids       = ["subnet-aaaaaaa", "subnet-bbbbbbb"]
+
+postgres_db       = "appdb"
+postgres_user     = "appuser"
+postgres_password = "replace_me"
+
+desired_count = 1
+task_cpu      = 512
+task_memory   = 1024
