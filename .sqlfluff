@@ -1,0 +1,6 @@
+[sqlfluff]
+dialect = postgres
+exclude_rules = L009  # leave formatting rules flexible early
+
+[sqlfluff:rules]
+capitalisation.keywords = upper
