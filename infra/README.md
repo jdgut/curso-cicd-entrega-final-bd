@@ -200,6 +200,14 @@ Apply plan:
 terraform -chdir=infra apply "staging.tfplan"
 ```
 
+Validate:
+```powershell
+aws ecs describe-services `
+  --cluster db-staging-cluster `
+  --services db-staging-service `
+  --query "services[0].{running:runningCount,desired:desiredCount,status:status}"
+```
+
 ### Production
 
 Generate plan:

@@ -26,6 +26,7 @@ resource "aws_ecs_task_definition" "db" {
     {
       name  = local.container_name
       image = var.docker_image_uri
+      user  = "999:999"
 
       portMappings = [
         {

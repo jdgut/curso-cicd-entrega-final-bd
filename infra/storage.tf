@@ -47,7 +47,7 @@ resource "aws_efs_access_point" "db" {
   }
 
   root_directory {
-    path = "/postgres-data"
+    path = "/var/lib/postgresql/data"
 
     creation_info {
       owner_uid   = 999
