@@ -67,7 +67,7 @@ Optional check commands:
 
 ```powershell
 terraform version
-aws sts get-caller-identity
+aws sts get-caller-identity --profile curso_cicd
 ```
 
 ## 4) Environment strategy
