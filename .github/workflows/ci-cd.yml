@@ -74,32 +74,46 @@ jobs:
             -p 5432:5432 \
             db-init:test
 
-      - name: Wait for PostgreSQL readiness
+      - name: Wait for PostgreSQL stable readiness
         run: |
-          for i in {1..30}; do
-            if docker exec pg-test pg_isready -U testuser -d testdb; then
-              echo "PostgreSQL is ready"
-              exit 0
+          READY_STREAK=0
+          for i in {1..90}; do
+            if docker exec pg-test pg_isready -U testuser -d testdb >/dev/null 2>&1 && \
+               docker exec pg-test psql -U testuser -d testdb -tAc "SELECT 1" >/dev/null 2>&1; then
+              READY_STREAK=$((READY_STREAK + 1))
+              echo "Readiness check passed ($READY_STREAK/3)"
+              if [ "$READY_STREAK" -ge 3 ]; then
+                echo "PostgreSQL is stably ready"
+                break
+              fi
+            else
+              READY_STREAK=0
             fi
             sleep 2
           done
-          echo "PostgreSQL did not become ready in time"
-          docker logs pg-test
-          exit 1
+
+          if [ "$READY_STREAK" -lt 3 ]; then
+            echo "PostgreSQL did not reach stable readiness in time"
+            docker logs pg-test
+            exit 1
+          fi
 
       - name: Verify initialization scripts
         run: |
-          docker exec pg-test psql \
-            -U testuser \
-            -d testdb \
-            -v ON_ERROR_STOP=1 \
-            -c "SELECT 1;"
+          run_query_with_retry() {
+            local query="$1"
+            for i in {1..10}; do
+              if docker exec pg-test psql -U testuser -d testdb -v ON_ERROR_STOP=1 -c "$query"; then
+                return 0
+              fi
+              echo "Query failed, retrying in 2s ($i/10)..."
+              sleep 2
+            done
+            return 1
+          }
 
-          docker exec pg-test psql \
-            -U testuser \
-            -d testdb \
-            -v ON_ERROR_STOP=1 \
-            -c "SELECT extname FROM pg_extension WHERE extname = 'uuid-ossp';"
+          run_query_with_retry "SELECT 1;"
+          run_query_with_retry "SELECT extname FROM pg_extension WHERE extname = 'uuid-ossp';"
 
       - name: Security scan (Trivy, informational)
         uses: aquasecurity/trivy-action@v0.36.0
