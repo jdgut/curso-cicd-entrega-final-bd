@@ -26,6 +26,13 @@ El repositorio incluye un flujo de GitHub Actions para validar la imagen de Post
 - `pull_request` hacia `main`
 - `workflow_dispatch` (ejecucion manual desde la pestaña Actions)
 
+Inputs manuales disponibles en `workflow_dispatch`:
+
+- `target_environment`: `staging`, `production` o `all`
+- `confirm_destroy`: ejecutar destroy solo si el valor es `DESTROY`
+- `confirm_unlock`: ejecutar unlock manual solo si el valor es `UNLOCK`
+- `lock_id` (opcional): ID de lock de Terraform para desbloqueo con validacion extra
+
 ### Variables y secretos requeridos
 
 - Variable `DOCKERHUB_USERNAME`
@@ -90,12 +97,19 @@ Comportamiento por rama:
 
 - `update-service-staging` y `update-service-prod`:
 	- Fuerzan un nuevo deployment del servicio ECS (`aws ecs update-service --force-new-deployment`).
-	- Esperan estabilidad del servicio (`aws ecs wait services-stable`).
+	- Esperan estabilidad del servicio con polling y diagnostico en caso de timeout.
 
 - `test-staging` y `smoke-test-prod`:
 	- Verifican que `runningCount == desiredCount`.
 	- Verifican que la task definition desplegada use la imagen esperada.
 	- Verifican al menos un target saludable en el target group del NLB.
+	- Esperan hasta 10 minutos por targets saludables para evitar falsos negativos por propagacion.
+	- Si falla el timeout, imprimen diagnostico de `describe-target-health` (state/reason/description).
+
+Protecciones adicionales del workflow:
+
+- Concurrencia por workflow y rama para reducir ejecuciones simultaneas que compiten por lock de estado Terraform.
+- `terraform destroy` usa `-lock-timeout=10m` para tolerar contencion temporal de lock.
 
 Nota: el NLB de la base de datos es interno (privado). Por eso las verificaciones en CI se hacen por plano de control de AWS (ECS/ELBv2) y no con conexion TCP directa desde el runner de GitHub.
 
@@ -117,9 +131,28 @@ Como ejecutarlo:
 
 Comportamiento de seguridad:
 
-- Si `confirm_destroy` es distinto de `DESTROY`, el job falla sin destruir recursos.
-- Si es correcto, ejecuta `terraform destroy -auto-approve` contra el estado remoto del entorno seleccionado.
+- El job de destroy solo se ejecuta si `confirm_destroy == DESTROY`.
+- Si es correcto, ejecuta `terraform destroy -auto-approve -lock-timeout=10m` contra el estado remoto del entorno seleccionado.
 - Para `all`, ejecuta destroy secuencialmente en `staging` y luego `production`.
+
+### Desbloqueo manual de estado Terraform (DynamoDB)
+
+Tambien se configuro un job manual en `.github/workflows/ci-cd.yml` llamado `Manual Unlock (Terraform State Lock)` para remover locks atascados.
+
+Como ejecutarlo:
+
+1. Ir a **Actions** en GitHub.
+2. Seleccionar el workflow **Database CI/CD**.
+3. Click en **Run workflow**.
+4. Elegir `target_environment` (`staging`, `production` o `all`).
+5. Escribir `UNLOCK` en `confirm_unlock`.
+6. (Recomendado) completar `lock_id` con el ID mostrado por Terraform en el error de lock.
+7. Ejecutar el workflow.
+
+Comportamiento de seguridad:
+
+- Si se envia `lock_id`, el unlock valida que el lock corresponda a ese ID antes de borrarlo.
+- Si no se envia `lock_id`, borra el item de lock por path del estado remoto seleccionado.
 
 ## Ejecución
 

@@ -294,3 +294,11 @@ terraform -chdir=infra destroy -var-file="production.tfvars"
   - Confirm subnet routing and security group rules.
 - PostgreSQL initialization issues:
   - Validate init/01-init.sql syntax and startup logs in CloudWatch.
+- Terraform state lock errors (DynamoDB ConditionalCheckFailedException):
+  - Wait for active apply/destroy jobs to finish, then retry.
+  - In CI, destroy already waits with lock timeout (`-lock-timeout=10m`).
+  - If lock is stale, use the manual workflow action `Manual Unlock (Terraform State Lock)` with `confirm_unlock=UNLOCK`.
+  - Prefer providing `lock_id` from Terraform error so unlock is guarded.
+- Smoke test shows running tasks but healthy targets = 0:
+  - CI now waits up to 10 minutes for target health propagation.
+  - If it still fails, inspect `describe-target-health` reason/description in workflow logs.
