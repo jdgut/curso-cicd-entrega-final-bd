@@ -193,8 +193,7 @@ jobs:
             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
             -backend-config="key=database/staging/terraform.tfstate" \
             -backend-config="region=us-east-1" \
-            -backend-config="dynamodb_table=terraform-state-locks" \
-            -backend-config="use_lockfile=true"
+            -backend-config="dynamodb_table=terraform-state-locks"
 
       - name: Terraform Apply (Staging)
         working-directory: infra
@@ -338,8 +337,7 @@ jobs:
             -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
             -backend-config="key=database/production/terraform.tfstate" \
             -backend-config="region=us-east-1" \
-            -backend-config="dynamodb_table=terraform-state-locks" \
-            -backend-config="use_lockfile=true"
+            -backend-config="dynamodb_table=terraform-state-locks"
 
       - name: Terraform Apply (Production)
         working-directory: infra
@@ -514,8 +512,7 @@ jobs:
               -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
               -backend-config="key=${BACKEND_KEY}" \
               -backend-config="region=us-east-1" \
-              -backend-config="dynamodb_table=terraform-state-locks" \
-              -backend-config="use_lockfile=true"
+              -backend-config="dynamodb_table=terraform-state-locks"
 
             terraform -chdir=infra destroy -auto-approve \
               -var="environment_name=${ENV_NAME}" \
