@@ -29,14 +29,60 @@ El repositorio incluye un flujo de GitHub Actions para validar la imagen de Post
 
 - Variable `DOCKERHUB_USERNAME`
 - Variable `SONAR_HOST_URL`
+- Variable `TF_STATE_BUCKET`
+- Variable `LAB_ROLE_ARN`
+- Variable `VPC_ID`
+- Variable `SUBNET_IDS` (formato CSV: `subnet-aaa,subnet-bbb`)
+- Variable `POSTGRES_DB`
+- Variable `POSTGRES_USER`
 - Secreto `DOCKERHUB_TOKEN`
 - Secreto `SONAR_TOKEN`
+- Secreto `AWS_ACCESS_KEY_ID`
+- Secreto `AWS_SECRET_ACCESS_KEY`
+- Secreto `AWS_SESSION_TOKEN`
+- Secreto `POSTGRES_PASSWORD`
 
 ### Tags de imagen esperados
 
 - `development` -> `dev`
 - `main` -> `latest`
 - Los pull requests solo ejecutan validación y no publican imágenes
+
+### Flujo de despliegue configurado (solo base de datos)
+
+El flujo en `.github/workflows/ci-cd.yml` implementa la secuencia:
+
+`build-test-publish`
+-> `deploy-tf-staging`
+-> `update-service-staging`
+-> `test-staging`
+-> `deploy-tf-prod`
+-> `update-service-prod`
+-> `smoke-test-prod`
+
+Comportamiento por rama:
+
+- `development`: ejecuta build, validaciones y publicación de imagen `:dev`.
+- `main`: ejecuta build, validaciones, publicación `:latest`, despliegue a staging, pruebas en staging, despliegue a producción y smoke test final.
+- `pull_request` hacia `main`: solo validación, sin publicación ni despliegues.
+
+### Que hace cada etapa de despliegue
+
+- `deploy-tf-staging` y `deploy-tf-prod`:
+	- Ejecutan `terraform init` con estado remoto en S3.
+	- Ejecutan `terraform apply` para actualizar ECS/NLB/EFS y fijar la imagen de Docker publicada.
+	- Publican outputs de Terraform (`database_endpoint`, `ecs_cluster_name`, `ecs_service_name`) para jobs posteriores.
+
+- `update-service-staging` y `update-service-prod`:
+	- Fuerzan un nuevo deployment del servicio ECS (`aws ecs update-service --force-new-deployment`).
+	- Esperan estabilidad del servicio (`aws ecs wait services-stable`).
+
+- `test-staging` y `smoke-test-prod`:
+	- Verifican que `runningCount == desiredCount`.
+	- Verifican que la task definition desplegada use la imagen esperada.
+	- Verifican al menos un target saludable en el target group del NLB.
+
+Nota: el NLB de la base de datos es interno (privado). Por eso las verificaciones en CI se hacen por plano de control de AWS (ECS/ELBv2) y no con conexion TCP directa desde el runner de GitHub.
 
 ## Ejecución
 
