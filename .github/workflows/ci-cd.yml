@@ -13,6 +13,20 @@ on:
       - synchronize
       - reopened
       - ready_for_review
+  workflow_dispatch:
+    inputs:
+      target_environment:
+        description: "Environment to destroy"
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+          - all
+      confirm_destroy:
+        description: "Type DESTROY to confirm"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -432,3 +446,90 @@ jobs:
           [ "$RUNNING" -eq "$DESIRED" ] || (echo "Running count does not match desired count" && exit 1)
           [ "$DEPLOYED_IMAGE" = "$EXPECTED_IMAGE" ] || (echo "Production is not running expected image" && exit 1)
           [ "$HEALTHY_COUNT" -ge 1 ] || (echo "No healthy targets registered in production" && exit 1)
+
+  cleanup-environment:
+    name: Manual Cleanup (Terraform Destroy)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~1.6"
+          terraform_wrapper: false
+
+      - name: Validate manual confirmation
+        if: github.event.inputs.confirm_destroy != 'DESTROY'
+        run: |
+          echo "Manual cleanup not executed. Type DESTROY in confirm_destroy to run terraform destroy."
+          exit 1
+
+      - name: Run Terraform Destroy (selected environment)
+        if: github.event.inputs.confirm_destroy == 'DESTROY'
+        shell: bash
+        env:
+          TARGET_ENVIRONMENT: ${{ github.event.inputs.target_environment }}
+          POSTGRES_DB: ${{ vars.POSTGRES_DB }}
+          POSTGRES_USER: ${{ vars.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+        run: |
+          REPO_NAME="${GITHUB_REPOSITORY##*/}"
+          REPO_NAME="$(echo "$REPO_NAME" | tr '[:upper:]' '[:lower:]')"
+          IMAGE_URI="${{ vars.DOCKERHUB_USERNAME }}/$REPO_NAME:latest"
+
+          SUBNET_LIST=$(echo "${{ vars.SUBNET_IDS }}" | awk -F',' '{printf "["; for(i=1;i<=NF;i++){gsub(/^ +| +$/, "", $i); printf "\"%s\"%s",$i,(i<NF?",":"")}; printf "]"}')
+
+          if [[ "$TARGET_ENVIRONMENT" == "all" ]]; then
+            ENVIRONMENTS=("staging" "production")
+          else
+            ENVIRONMENTS=("$TARGET_ENVIRONMENT")
+          fi
+
+          for ENV_NAME in "${ENVIRONMENTS[@]}"; do
+            if [[ "$ENV_NAME" == "staging" ]]; then
+              TASK_CPU="512"
+              TASK_MEMORY="1024"
+              BACKEND_KEY="database/staging/terraform.tfstate"
+            else
+              TASK_CPU="1024"
+              TASK_MEMORY="2048"
+              BACKEND_KEY="database/production/terraform.tfstate"
+            fi
+
+            echo "Starting destroy for environment: $ENV_NAME"
+
+            terraform -chdir=infra init -reconfigure \
+              -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+              -backend-config="key=${BACKEND_KEY}" \
+              -backend-config="region=us-east-1" \
+              -backend-config="dynamodb_table=terraform-state-locks" \
+              -backend-config="use_lockfile=true"
+
+            terraform -chdir=infra destroy -auto-approve \
+              -var="environment_name=${ENV_NAME}" \
+              -var="aws_region=us-east-1" \
+              -var="docker_image_uri=${IMAGE_URI}" \
+              -var="lab_role_arn=${{ vars.LAB_ROLE_ARN }}" \
+              -var="vpc_id=${{ vars.VPC_ID }}" \
+              -var="subnet_ids=${SUBNET_LIST}" \
+              -var="postgres_db=${POSTGRES_DB}" \
+              -var="postgres_user=${POSTGRES_USER}" \
+              -var="postgres_password=${POSTGRES_PASSWORD}" \
+              -var="task_cpu=${TASK_CPU}" \
+              -var="task_memory=${TASK_MEMORY}" \
+              -var="desired_count=1"
+
+            echo "Destroy completed for environment: $ENV_NAME"
+          done

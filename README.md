@@ -24,6 +24,7 @@ El repositorio incluye un flujo de GitHub Actions para validar la imagen de Post
 - `push` en `development`
 - `push` en `main`
 - `pull_request` hacia `main`
+- `workflow_dispatch` (ejecucion manual desde la pestaña Actions)
 
 ### Variables y secretos requeridos
 
@@ -83,6 +84,28 @@ Comportamiento por rama:
 	- Verifican al menos un target saludable en el target group del NLB.
 
 Nota: el NLB de la base de datos es interno (privado). Por eso las verificaciones en CI se hacen por plano de control de AWS (ECS/ELBv2) y no con conexion TCP directa desde el runner de GitHub.
+
+### Limpieza manual del entorno (reset con Terraform Destroy)
+
+Se configuro un job manual en `.github/workflows/ci-cd.yml` llamado `Manual Cleanup (Terraform Destroy)` para reiniciar entornos bajo demanda.
+
+Como ejecutarlo:
+
+1. Ir a **Actions** en GitHub.
+2. Seleccionar el workflow **Database CI/CD**.
+3. Click en **Run workflow**.
+4. Elegir `target_environment`:
+	- `staging`
+	- `production`
+	- `all` (destruye ambos)
+5. Escribir `DESTROY` en `confirm_destroy`.
+6. Ejecutar el workflow.
+
+Comportamiento de seguridad:
+
+- Si `confirm_destroy` es distinto de `DESTROY`, el job falla sin destruir recursos.
+- Si es correcto, ejecuta `terraform destroy -auto-approve` contra el estado remoto del entorno seleccionado.
+- Para `all`, ejecuta destroy secuencialmente en `staging` y luego `production`.
 
 ## Ejecución
 
