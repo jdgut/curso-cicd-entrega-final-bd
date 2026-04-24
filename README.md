@@ -43,6 +43,20 @@ El repositorio incluye un flujo de GitHub Actions para validar la imagen de Post
 - Secreto `AWS_SESSION_TOKEN`
 - Secreto `POSTGRES_PASSWORD`
 
+### Credenciales de base de datos usadas en laboratorio
+
+En la configuracion local de Terraform para staging (`infra/staging.tfvars`) se usan estos valores:
+
+- `postgres_db = "movilidad"`
+- `postgres_user = "postgres"`
+- `postgres_password = "postgres"`
+
+Importante para CI/CD:
+
+- El workflow de GitHub Actions no toma `postgres_password` desde `infra/staging.tfvars`.
+- El workflow usa el secreto de repositorio `POSTGRES_PASSWORD`.
+- `POSTGRES_PASSWORD` debe existir y tener un valor no vacio, o el deploy falla durante el arranque de PostgreSQL.
+
 ### Tags de imagen esperados
 
 - `development` -> `dev`

@@ -218,8 +218,15 @@ jobs:
           POSTGRES_USER: ${{ vars.POSTGRES_USER }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         run: |
+          set -euo pipefail
+
           if [ -z "${IMAGE_URI}" ]; then
             echo "IMAGE_URI is empty; build-test-publish output was not produced."
+            exit 1
+          fi
+
+          if [ -z "${POSTGRES_DB:-}" ] || [ -z "${POSTGRES_USER:-}" ] || [ -z "${POSTGRES_PASSWORD:-}" ]; then
+            echo "POSTGRES_DB, POSTGRES_USER and POSTGRES_PASSWORD must be non-empty."
             exit 1
           fi
 
@@ -263,17 +270,86 @@ jobs:
           aws-region: us-east-1
 
       - name: Force New Deployment ECS Service Staging
+        shell: bash
         run: |
+          set -euo pipefail
+
+          CLUSTER="${{ needs.deploy-tf-staging.outputs.cluster_name }}"
+          SERVICE="${{ needs.deploy-tf-staging.outputs.service_name }}"
+
+          print_service_diagnostics() {
+            echo "==== ECS Service Description ===="
+            aws ecs describe-services \
+              --cluster "$CLUSTER" \
+              --services "$SERVICE" \
+              --region us-east-1 \
+              --output json
+
+            echo "==== Recent ECS Service Events ===="
+            aws ecs describe-services \
+              --cluster "$CLUSTER" \
+              --services "$SERVICE" \
+              --region us-east-1 \
+              --query 'services[0].events[0:15].[createdAt,message]' \
+              --output table || true
+
+            for STATUS in RUNNING STOPPED; do
+              TASK_ARNS=$(aws ecs list-tasks \
+                --cluster "$CLUSTER" \
+                --service-name "$SERVICE" \
+                --desired-status "$STATUS" \
+                --region us-east-1 \
+                --query 'taskArns' \
+                --output text || true)
+
+              if [ -n "${TASK_ARNS:-}" ] && [ "$TASK_ARNS" != "None" ]; then
+                echo "==== ECS Tasks ($STATUS) ===="
+                aws ecs describe-tasks \
+                  --cluster "$CLUSTER" \
+                  --tasks $TASK_ARNS \
+                  --region us-east-1 \
+                  --query 'tasks[].{taskArn:taskArn,lastStatus:lastStatus,desiredStatus:desiredStatus,stopCode:stopCode,stoppedReason:stoppedReason,containerReason:containers[0].reason,exitCode:containers[0].exitCode}' \
+                  --output table || true
+              fi
+            done
+          }
+
           aws ecs update-service \
-            --cluster "${{ needs.deploy-tf-staging.outputs.cluster_name }}" \
-            --service "${{ needs.deploy-tf-staging.outputs.service_name }}" \
+            --cluster "$CLUSTER" \
+            --service "$SERVICE" \
             --force-new-deployment \
             --region us-east-1
 
-          aws ecs wait services-stable \
-            --cluster "${{ needs.deploy-tf-staging.outputs.cluster_name }}" \
-            --services "${{ needs.deploy-tf-staging.outputs.service_name }}" \
-            --region us-east-1
+          MAX_SECONDS=1800
+          INTERVAL=15
+          ELAPSED=0
+
+          while [ "$ELAPSED" -lt "$MAX_SECONDS" ]; do
+            DESIRED=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --region us-east-1 --query 'services[0].desiredCount' --output text)
+            RUNNING=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --region us-east-1 --query 'services[0].runningCount' --output text)
+            PENDING=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --region us-east-1 --query 'services[0].pendingCount' --output text)
+            FAILED_DEPLOYMENTS=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --region us-east-1 --query 'length(services[0].deployments[?rolloutState==`FAILED`])' --output text)
+
+            echo "[$ELAPSED s] desired=$DESIRED running=$RUNNING pending=$PENDING failed_deployments=$FAILED_DEPLOYMENTS"
+
+            if [ "$FAILED_DEPLOYMENTS" -gt 0 ]; then
+              echo "Deployment entered FAILED rollout state."
+              print_service_diagnostics
+              exit 1
+            fi
+
+            if [ "$RUNNING" -eq "$DESIRED" ] && [ "$PENDING" -eq 0 ]; then
+              echo "Service reached steady state."
+              exit 0
+            fi
+
+            sleep "$INTERVAL"
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
+
+          echo "Timed out waiting for service steady state."
+          print_service_diagnostics
+          exit 1
 
   test-staging:
     name: Test Staging
@@ -362,8 +438,15 @@ jobs:
           POSTGRES_USER: ${{ vars.POSTGRES_USER }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         run: |
+          set -euo pipefail
+
           if [ -z "${IMAGE_URI}" ]; then
             echo "IMAGE_URI is empty; build-test-publish output was not produced."
+            exit 1
+          fi
+
+          if [ -z "${POSTGRES_DB:-}" ] || [ -z "${POSTGRES_USER:-}" ] || [ -z "${POSTGRES_PASSWORD:-}" ]; then
+            echo "POSTGRES_DB, POSTGRES_USER and POSTGRES_PASSWORD must be non-empty."
             exit 1
           fi
 
@@ -407,17 +490,86 @@ jobs:
           aws-region: us-east-1
 
       - name: Force New Deployment ECS Service Production
+        shell: bash
         run: |
+          set -euo pipefail
+
+          CLUSTER="${{ needs.deploy-tf-prod.outputs.cluster_name }}"
+          SERVICE="${{ needs.deploy-tf-prod.outputs.service_name }}"
+
+          print_service_diagnostics() {
+            echo "==== ECS Service Description ===="
+            aws ecs describe-services \
+              --cluster "$CLUSTER" \
+              --services "$SERVICE" \
+              --region us-east-1 \
+              --output json
+
+            echo "==== Recent ECS Service Events ===="
+            aws ecs describe-services \
+              --cluster "$CLUSTER" \
+              --services "$SERVICE" \
+              --region us-east-1 \
+              --query 'services[0].events[0:15].[createdAt,message]' \
+              --output table || true
+
+            for STATUS in RUNNING STOPPED; do
+              TASK_ARNS=$(aws ecs list-tasks \
+                --cluster "$CLUSTER" \
+                --service-name "$SERVICE" \
+                --desired-status "$STATUS" \
+                --region us-east-1 \
+                --query 'taskArns' \
+                --output text || true)
+
+              if [ -n "${TASK_ARNS:-}" ] && [ "$TASK_ARNS" != "None" ]; then
+                echo "==== ECS Tasks ($STATUS) ===="
+                aws ecs describe-tasks \
+                  --cluster "$CLUSTER" \
+                  --tasks $TASK_ARNS \
+                  --region us-east-1 \
+                  --query 'tasks[].{taskArn:taskArn,lastStatus:lastStatus,desiredStatus:desiredStatus,stopCode:stopCode,stoppedReason:stoppedReason,containerReason:containers[0].reason,exitCode:containers[0].exitCode}' \
+                  --output table || true
+              fi
+            done
+          }
+
           aws ecs update-service \
-            --cluster "${{ needs.deploy-tf-prod.outputs.cluster_name }}" \
-            --service "${{ needs.deploy-tf-prod.outputs.service_name }}" \
+            --cluster "$CLUSTER" \
+            --service "$SERVICE" \
             --force-new-deployment \
             --region us-east-1
 
-          aws ecs wait services-stable \
-            --cluster "${{ needs.deploy-tf-prod.outputs.cluster_name }}" \
-            --services "${{ needs.deploy-tf-prod.outputs.service_name }}" \
-            --region us-east-1
+          MAX_SECONDS=1800
+          INTERVAL=15
+          ELAPSED=0
+
+          while [ "$ELAPSED" -lt "$MAX_SECONDS" ]; do
+            DESIRED=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --region us-east-1 --query 'services[0].desiredCount' --output text)
+            RUNNING=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --region us-east-1 --query 'services[0].runningCount' --output text)
+            PENDING=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --region us-east-1 --query 'services[0].pendingCount' --output text)
+            FAILED_DEPLOYMENTS=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --region us-east-1 --query 'length(services[0].deployments[?rolloutState==`FAILED`])' --output text)
+
+            echo "[$ELAPSED s] desired=$DESIRED running=$RUNNING pending=$PENDING failed_deployments=$FAILED_DEPLOYMENTS"
+
+            if [ "$FAILED_DEPLOYMENTS" -gt 0 ]; then
+              echo "Deployment entered FAILED rollout state."
+              print_service_diagnostics
+              exit 1
+            fi
+
+            if [ "$RUNNING" -eq "$DESIRED" ] && [ "$PENDING" -eq 0 ]; then
+              echo "Service reached steady state."
+              exit 0
+            fi
+
+            sleep "$INTERVAL"
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
+
+          echo "Timed out waiting for service steady state."
+          print_service_diagnostics
+          exit 1
 
   smoke-test-prod:
     name: Smoke Test Production
