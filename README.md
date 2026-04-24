@@ -157,3 +157,10 @@ Comportamiento de seguridad:
 ## Ejecución
 
 La base de datos se levanta mediante `docker compose up` desde la raíz.
+
+
+database_endpoint = "db-staging-nlb-a5dc7ce086ea0639.elb.us-east-1.amazonaws.com:5432"
+database_nlb_dns_name = "db-staging-nlb-a5dc7ce086ea0639.elb.us-east-1.amazonaws.com"
+
+database_endpoint = "db-production-nlb-526683a293979372.elb.us-east-1.amazonaws.com:5432"
+database_nlb_dns_name = "db-production-nlb-526683a293979372.elb.us-east-1.amazonaws.com"
