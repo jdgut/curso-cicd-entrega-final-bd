@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       target_environment:
-        description: "Environment to destroy"
+        description: "Environment to operate on (destroy/unlock)"
         required: true
         type: choice
         options:
@@ -25,11 +25,23 @@ on:
           - all
       confirm_destroy:
         description: "Type DESTROY to confirm"
-        required: true
+        required: false
+        type: string
+      confirm_unlock:
+        description: "Type UNLOCK to remove Terraform state lock"
+        required: false
+        type: string
+      lock_id:
+        description: "Optional lock ID (from Terraform error) to guard unlock"
+        required: false
         type: string
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   build-test-publish:
@@ -373,12 +385,35 @@ jobs:
           SERVICE: ${{ needs.deploy-tf-staging.outputs.service_name }}
           EXPECTED_IMAGE: ${{ needs.build-test-publish.outputs.image_uri }}
         run: |
+          set -euo pipefail
+
+          print_target_health() {
+            aws elbv2 describe-target-health \
+              --target-group-arn "$TARGET_GROUP_ARN" \
+              --query 'TargetHealthDescriptions[].{target:Target.Id,state:TargetHealth.State,reason:TargetHealth.Reason,description:TargetHealth.Description}' \
+              --output table || true
+          }
+
           DESIRED=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --query 'services[0].desiredCount' --output text)
           RUNNING=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --query 'services[0].runningCount' --output text)
           TASK_DEF_ARN=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --query 'services[0].taskDefinition' --output text)
           DEPLOYED_IMAGE=$(aws ecs describe-task-definition --task-definition "$TASK_DEF_ARN" --query 'taskDefinition.containerDefinitions[0].image' --output text)
           TARGET_GROUP_ARN=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --query 'services[0].loadBalancers[0].targetGroupArn' --output text)
-          HEALTHY_COUNT=$(aws elbv2 describe-target-health --target-group-arn "$TARGET_GROUP_ARN" --query 'length(TargetHealthDescriptions[?TargetHealth.State==`healthy`])' --output text)
+
+          HEALTHY_COUNT=0
+          MAX_SECONDS=600
+          INTERVAL=15
+          ELAPSED=0
+
+          while [ "$ELAPSED" -lt "$MAX_SECONDS" ]; do
+            HEALTHY_COUNT=$(aws elbv2 describe-target-health --target-group-arn "$TARGET_GROUP_ARN" --query 'length(TargetHealthDescriptions[?TargetHealth.State==`healthy`])' --output text)
+            echo "[$ELAPSED s] Healthy targets: $HEALTHY_COUNT"
+            if [ "$HEALTHY_COUNT" -ge 1 ]; then
+              break
+            fi
+            sleep "$INTERVAL"
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
 
           echo "Desired tasks: $DESIRED"
           echo "Running tasks: $RUNNING"
@@ -389,7 +424,11 @@ jobs:
           [ "$RUNNING" -ge 1 ] || (echo "No running tasks in staging" && exit 1)
           [ "$RUNNING" -eq "$DESIRED" ] || (echo "Running count does not match desired count" && exit 1)
           [ "$DEPLOYED_IMAGE" = "$EXPECTED_IMAGE" ] || (echo "Staging is not running expected image" && exit 1)
-          [ "$HEALTHY_COUNT" -ge 1 ] || (echo "No healthy targets registered in staging" && exit 1)
+          if [ "$HEALTHY_COUNT" -lt 1 ]; then
+            echo "No healthy targets registered in staging after waiting ${MAX_SECONDS}s"
+            print_target_health
+            exit 1
+          fi
 
   deploy-tf-prod:
     name: Deploy Terraform Production
@@ -593,12 +632,35 @@ jobs:
           SERVICE: ${{ needs.deploy-tf-prod.outputs.service_name }}
           EXPECTED_IMAGE: ${{ needs.build-test-publish.outputs.image_uri }}
         run: |
+          set -euo pipefail
+
+          print_target_health() {
+            aws elbv2 describe-target-health \
+              --target-group-arn "$TARGET_GROUP_ARN" \
+              --query 'TargetHealthDescriptions[].{target:Target.Id,state:TargetHealth.State,reason:TargetHealth.Reason,description:TargetHealth.Description}' \
+              --output table || true
+          }
+
           DESIRED=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --query 'services[0].desiredCount' --output text)
           RUNNING=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --query 'services[0].runningCount' --output text)
           TASK_DEF_ARN=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --query 'services[0].taskDefinition' --output text)
           DEPLOYED_IMAGE=$(aws ecs describe-task-definition --task-definition "$TASK_DEF_ARN" --query 'taskDefinition.containerDefinitions[0].image' --output text)
           TARGET_GROUP_ARN=$(aws ecs describe-services --cluster "$CLUSTER" --services "$SERVICE" --query 'services[0].loadBalancers[0].targetGroupArn' --output text)
-          HEALTHY_COUNT=$(aws elbv2 describe-target-health --target-group-arn "$TARGET_GROUP_ARN" --query 'length(TargetHealthDescriptions[?TargetHealth.State==`healthy`])' --output text)
+
+          HEALTHY_COUNT=0
+          MAX_SECONDS=600
+          INTERVAL=15
+          ELAPSED=0
+
+          while [ "$ELAPSED" -lt "$MAX_SECONDS" ]; do
+            HEALTHY_COUNT=$(aws elbv2 describe-target-health --target-group-arn "$TARGET_GROUP_ARN" --query 'length(TargetHealthDescriptions[?TargetHealth.State==`healthy`])' --output text)
+            echo "[$ELAPSED s] Healthy targets: $HEALTHY_COUNT"
+            if [ "$HEALTHY_COUNT" -ge 1 ]; then
+              break
+            fi
+            sleep "$INTERVAL"
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
 
           echo "Desired tasks: $DESIRED"
           echo "Running tasks: $RUNNING"
@@ -609,12 +671,16 @@ jobs:
           [ "$RUNNING" -ge 1 ] || (echo "No running tasks in production" && exit 1)
           [ "$RUNNING" -eq "$DESIRED" ] || (echo "Running count does not match desired count" && exit 1)
           [ "$DEPLOYED_IMAGE" = "$EXPECTED_IMAGE" ] || (echo "Production is not running expected image" && exit 1)
-          [ "$HEALTHY_COUNT" -ge 1 ] || (echo "No healthy targets registered in production" && exit 1)
+          if [ "$HEALTHY_COUNT" -lt 1 ]; then
+            echo "No healthy targets registered in production after waiting ${MAX_SECONDS}s"
+            print_target_health
+            exit 1
+          fi
 
   cleanup-environment:
     name: Manual Cleanup (Terraform Destroy)
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_destroy == 'DESTROY'
 
     steps:
       - name: Checkout repository
@@ -634,14 +700,7 @@ jobs:
           terraform_version: "~1.6"
           terraform_wrapper: false
 
-      - name: Validate manual confirmation
-        if: github.event.inputs.confirm_destroy != 'DESTROY'
-        run: |
-          echo "Manual cleanup not executed. Type DESTROY in confirm_destroy to run terraform destroy."
-          exit 1
-
       - name: Run Terraform Destroy (selected environment)
-        if: github.event.inputs.confirm_destroy == 'DESTROY'
         shell: bash
         env:
           TARGET_ENVIRONMENT: ${{ github.event.inputs.target_environment }}
@@ -680,7 +739,7 @@ jobs:
               -backend-config="region=us-east-1" \
               -backend-config="dynamodb_table=terraform-state-locks"
 
-            terraform -chdir=infra destroy -auto-approve \
+            terraform -chdir=infra destroy -auto-approve -lock-timeout=10m \
               -var="environment_name=${ENV_NAME}" \
               -var="aws_region=us-east-1" \
               -var="docker_image_uri=${IMAGE_URI}" \
@@ -695,4 +754,75 @@ jobs:
               -var="desired_count=1"
 
             echo "Destroy completed for environment: $ENV_NAME"
+          done
+
+  unlock-state:
+    name: Manual Unlock (Terraform State Lock)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.confirm_unlock == 'UNLOCK'
+
+    steps:
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: us-east-1
+
+      - name: Remove Terraform lock item (selected environment)
+        shell: bash
+        env:
+          TARGET_ENVIRONMENT: ${{ github.event.inputs.target_environment }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          LOCK_ID: ${{ github.event.inputs.lock_id }}
+        run: |
+          set -euo pipefail
+
+          TABLE_NAME="terraform-state-locks"
+
+          if [[ -n "${LOCK_ID:-}" ]]; then
+            echo "Using guarded unlock with lock ID: ${LOCK_ID}"
+          else
+            echo "No lock_id provided. Unlock will delete existing lock item by path only."
+          fi
+
+          if [[ "$TARGET_ENVIRONMENT" == "all" ]]; then
+            ENVIRONMENTS=("staging" "production")
+          else
+            ENVIRONMENTS=("$TARGET_ENVIRONMENT")
+          fi
+
+          for ENV_NAME in "${ENVIRONMENTS[@]}"; do
+            if [[ "$ENV_NAME" == "staging" ]]; then
+              BACKEND_KEY="database/staging/terraform.tfstate"
+            else
+              BACKEND_KEY="database/production/terraform.tfstate"
+            fi
+
+            LOCK_PATH="${TF_STATE_BUCKET}/${BACKEND_KEY}"
+            KEY_JSON=$(printf '{"LockID":{"S":"%s"}}' "$LOCK_PATH")
+
+            echo "Checking lock item for: $LOCK_PATH"
+            aws dynamodb get-item \
+              --table-name "$TABLE_NAME" \
+              --key "$KEY_JSON" \
+              --consistent-read \
+              --output json
+
+            if [[ -n "${LOCK_ID:-}" ]]; then
+              VALUE_JSON=$(printf '{":id":{"S":"%s"}}' "$LOCK_ID")
+              aws dynamodb delete-item \
+                --table-name "$TABLE_NAME" \
+                --key "$KEY_JSON" \
+                --condition-expression 'attribute_exists(LockID) AND contains(Info, :id)' \
+                --expression-attribute-values "$VALUE_JSON"
+            else
+              aws dynamodb delete-item \
+                --table-name "$TABLE_NAME" \
+                --key "$KEY_JSON" \
+                --condition-expression 'attribute_exists(LockID)'
+            fi
+
+            echo "Lock removed for: $LOCK_PATH"
           done
