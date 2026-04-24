@@ -140,7 +140,7 @@ terraform -chdir=infra init -reconfigure `
 ```
 
 Note:
-- Backend example files include use_lockfile = true (current mechanism) and dynamodb_table for compatibility with your existing lock table.
+- Backend example files include dynamodb_table for compatibility with your existing lock table.
 - If you prefer not to use DynamoDB locking, remove the dynamodb_table line from both backend hcl files.
 - If you already initialized locally with -backend=false, run init -reconfigure as above to switch to remote state cleanly.
 
