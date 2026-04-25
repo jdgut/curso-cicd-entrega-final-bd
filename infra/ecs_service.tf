@@ -102,8 +102,11 @@ resource "aws_ecs_service" "db" {
     container_port   = var.db_container_port
   }
 
-  deployment_minimum_healthy_percent = 50
-  deployment_maximum_percent         = 200
+  # Single Postgres instance must never share PGDATA across two tasks. EFS is one
+  # filesystem: two tasks during deploy (max >100%) = two postmasters → WAL/catalog
+  # corruption, "File exists" on CREATE DATABASE, wrong postmaster.pid, etc.
+  deployment_minimum_healthy_percent = 0
+  deployment_maximum_percent         = 100
 
   lifecycle {
     ignore_changes = [desired_count]
