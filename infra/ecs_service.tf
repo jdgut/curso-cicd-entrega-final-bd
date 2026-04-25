@@ -88,6 +88,7 @@ resource "aws_ecs_service" "db" {
   cluster         = aws_ecs_cluster.db.id
   task_definition = aws_ecs_task_definition.db.arn
   desired_count   = var.desired_count
+  enable_execute_command = true
   launch_type     = "FARGATE"
 
   network_configuration {

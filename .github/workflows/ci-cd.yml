@@ -630,7 +630,11 @@ jobs:
         env:
           CLUSTER: ${{ needs.deploy-tf-prod.outputs.cluster_name }}
           SERVICE: ${{ needs.deploy-tf-prod.outputs.service_name }}
-          EXPECTED_IMAGE: ${{ needs.build-test-publish.outputs.image_uri }}
+          EXPECTED_IMAGE: ${{ needs.build-test-publish.outputs.image_uri }}          
+          DB_NAME: ${{ vars.POSTGRES_DB }}
+          DB_USER: ${{ vars.POSTGRES_USER }}
+          DB_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+
         run: |
           set -euo pipefail
 
@@ -667,8 +671,12 @@ jobs:
           echo "Expected image: $EXPECTED_IMAGE"
           echo "Deployed image: $DEPLOYED_IMAGE"
           echo "Healthy targets: $HEALTHY_COUNT"
-
-          [ "$RUNNING" -ge 1 ] || (echo "No running tasks in production" && exit 1)
+          
+          if [ "$HEALTHY_COUNT" -lt 1 ]; then
+            echo "No healthy targets in production"
+            print_target_health
+            exit 1
+          fi
           [ "$RUNNING" -eq "$DESIRED" ] || (echo "Running count does not match desired count" && exit 1)
           [ "$DEPLOYED_IMAGE" = "$EXPECTED_IMAGE" ] || (echo "Production is not running expected image" && exit 1)
           if [ "$HEALTHY_COUNT" -lt 1 ]; then
@@ -676,6 +684,65 @@ jobs:
             print_target_health
             exit 1
           fi
+
+          echo "Starting database smoke test via ECS Exec..."
+
+          $TASK_ARN"TASK_ARN=$(aws ecs list-tasks \
+
+          TASK_DEF_ARN=$(aws ecs describe-tasks \
+            --cluster "$CLUSTER" \
+            --tasks "$TASK_ARN" \
+            --query 'tasks[0].taskDefinitionArn' \
+            --output text)
+
+          CONTAINER_NAME=$(aws ecs describe-task-definition \
+            --task-definition "$TASK_DEF_ARN" \
+            --query 'taskDefinition.containerDefinitions[?essential==`true`].name | [0]' \
+            --output text)
+
+          if [ -z "$CONTAINER_NAME" ] || [ "$CONTAINER_NAME" = "None" ]; then
+            echo "FAILED to determine container name"
+            exit 1
+          fi
+
+          echo "Using container: $CONTAINER_NAME"
+
+          MAX_DB_RETRIES=10
+          DB_SLEEP=10
+
+          for i in $(seq 1 $MAX_DB_RETRIES); do
+            echo "DB check attempt $i/$MAX_DB_RETRIES (SELECT 1)..."
+
+            if aws ecs execute-command \
+              --cluster "$CLUSTER" \
+              --task "$TASK_ARN" \
+              --container "$CONTAINER_NAME" \
+              --command "/bin/bash -lc \"PGPASSWORD='$DB_PASSWORD' psql -U '$DB_USER' -d '$DB_NAME' -c 'SELECT 1;'\"" \
+              >/dev/null 2>&1; then
+
+              echo "Database smoke test SUCCEEDED"
+              exit 0
+            fi
+
+            echo "Database not ready yet, retrying in ${DB_SLEEP}s..."
+            sleep "$DB_SLEEP"
+          done
+
+          echo "Database smoke TEST FAILED after ${MAX_DB_RETRIES} attempts"
+          exit 1
+            --cluster "$CLUSTER" \
+            --service-name "$SERVICE" \
+            --desired-status RUNNING \
+            --query 'taskArns[0]' \
+            --output text)
+
+          if [ -z "$TASK_ARN" ] || [ "$TASK_ARN" = "None" ]; then
+            echo "NO RUNNING ECS TASK FOUND for DB smoke test"
+            exit 1
+          fi
+
+
+
 
   cleanup-environment:
     name: Manual Cleanup (Terraform Destroy)
